@@ -15,33 +15,11 @@ import logging
 import sys
 import time
 
-import requests
-
 import config
 import storage
 import venues
 
 log = logging.getLogger("collector")
-
-
-def _brief(e):
-    """Turn a noisy network traceback into one readable line."""
-    if isinstance(e, requests.exceptions.ProxyError):
-        return "blocked by a network proxy"
-    if isinstance(e, requests.exceptions.ConnectTimeout):
-        return "connection timed out"
-    if isinstance(e, requests.exceptions.ConnectionError):
-        return "cannot reach host (offline, DNS, or firewall)"
-    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
-        code = e.response.status_code
-        if code == 429:
-            return "rate limited (HTTP 429) — try a longer POLL_SECONDS"
-        if code in (403, 451):
-            return f"access denied (HTTP {code}) — venue may block your region"
-        return f"HTTP {code}"
-    if isinstance(e, (KeyError, IndexError, TypeError, ValueError)):
-        return f"unexpected response shape ({type(e).__name__}: {e})"
-    return f"{type(e).__name__}: {e}"
 
 
 def _store(conn, bundle):
@@ -95,7 +73,7 @@ def collect_once(conn, backfill=False):
                 log.info("%-12s %-14s ok", venue, symbol)
             except Exception as e:
                 failed += 1
-                log.warning("%-12s %-14s %s", venue, symbol, _brief(e))
+                log.warning("%-12s %-14s %s", venue, symbol, venues.brief_error(e))
 
     if config.VENUES.get("hyperliquid"):
         symbols = tuple(config.SYMBOLS.get("hyperliquid", []))
@@ -105,7 +83,7 @@ def collect_once(conn, backfill=False):
             log.info("%-12s %-14s ok", "hyperliquid", ",".join(symbols))
         except Exception as e:
             failed += 1
-            log.warning("%-12s %-14s %s", "hyperliquid", "", _brief(e))
+            log.warning("%-12s %-14s %s", "hyperliquid", "", venues.brief_error(e))
 
     # OKX long/short is per-currency, not per-instrument.
     if config.VENUES.get("okx"):
@@ -113,7 +91,7 @@ def collect_once(conn, backfill=False):
             try:
                 written += storage.upsert(conn, "long_short", venues.okx_long_short(ccy))
             except Exception as e:
-                log.warning("%-12s %-14s %s", "okx l/s", ccy, _brief(e))
+                log.warning("%-12s %-14s %s", "okx l/s", ccy, venues.brief_error(e))
 
     return written, ok, failed
 

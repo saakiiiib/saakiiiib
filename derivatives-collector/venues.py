@@ -14,6 +14,26 @@ TIMEOUT = 15
 UA = {"User-Agent": "derivatives-collector/1.0"}
 
 
+def brief_error(e):
+    """Turn a noisy network traceback into one readable line."""
+    if isinstance(e, requests.exceptions.ProxyError):
+        return "blocked by a network proxy"
+    if isinstance(e, requests.exceptions.ConnectTimeout):
+        return "connection timed out"
+    if isinstance(e, requests.exceptions.ConnectionError):
+        return "cannot reach host (offline, DNS, or firewall)"
+    if isinstance(e, requests.exceptions.HTTPError) and e.response is not None:
+        code = e.response.status_code
+        if code == 429:
+            return "rate limited (HTTP 429) — try a longer poll interval"
+        if code in (403, 451):
+            return f"access denied (HTTP {code}) — venue may block your region"
+        return f"HTTP {code}"
+    if isinstance(e, (KeyError, IndexError, TypeError, ValueError)):
+        return f"unexpected response shape ({type(e).__name__}: {e})"
+    return f"{type(e).__name__}: {e}"
+
+
 def _get(url, params=None):
     r = requests.get(url, params=params, timeout=TIMEOUT, headers=UA)
     r.raise_for_status()

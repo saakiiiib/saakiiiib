@@ -55,6 +55,12 @@ CREATE TABLE IF NOT EXISTS liquidations (
     usd REAL
 );
 
+CREATE TABLE IF NOT EXISTS alert_fires (
+    alert_id TEXT PRIMARY KEY,     -- stable id, so a restart never re-fires
+    fired_ts INTEGER NOT NULL,
+    price REAL NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_liq_ts ON liquidations (ts);
 CREATE INDEX IF NOT EXISTS idx_liq_sym ON liquidations (symbol, ts);
 CREATE INDEX IF NOT EXISTS idx_oi_sym ON open_interest (symbol, ts);

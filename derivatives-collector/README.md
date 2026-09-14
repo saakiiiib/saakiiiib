@@ -38,6 +38,10 @@ python3 collector.py --once     # one pass (also backfills real OI/funding histo
 python3 collector.py            # keep running, polls every 5 minutes
 python3 liquidations.py         # live liquidation feed (separate terminal)
 
+python3 alerts.py --test        # check notifications work
+python3 alerts.py --list        # show your alert levels
+python3 alerts.py               # watch levels, notify when hit
+
 python3 report.py               # current snapshot across all venues
 python3 report.py --oi BTC      # how open interest moved
 python3 report.py --liqs 24     # liquidation totals, last 24h
@@ -45,6 +49,44 @@ python3 report.py --liqs 24     # liquidation totals, last 24h
 
 Run `collector.py` and `liquidations.py` together in two terminals and leave
 them going — that's how the history builds up.
+
+## Alerts
+
+`alerts.py` watches price levels and notifies you when one is hit — the job
+people normally use TradingView alerts for, except free and running on your
+own machine.
+
+Edit the `ALERTS` list in `alerts.py`:
+
+```python
+{"id": "btc-entry", "venue": "bybit", "symbol": "BTCUSDT",
+ "direction": "below", "level": 76640,
+ "note": "Limit-buy zone."},
+```
+
+Each alert fires **once** and is then recorded in the database, so restarting
+the script never re-sends it. Re-arm everything with `alerts.py --reset`.
+
+### Getting alerts on your phone
+
+Terminal and desktop notifications work with no setup. For your phone, add
+Telegram — free, and about two minutes of work:
+
+1. Message [@BotFather](https://t.me/botfather) on Telegram, send `/newbot`
+2. Message your new bot once, then open
+   `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat id
+3. Export both before running:
+
+```bash
+export TELEGRAM_BOT_TOKEN="your-token"
+export TELEGRAM_CHAT_ID="your-chat-id"
+python3 alerts.py --test
+```
+
+A Discord or Slack webhook works too — set `ALERT_WEBHOOK_URL`.
+
+**Keep these in your shell or a `.env` file, never in the code**, and never
+paste them into a chat — a bot token lets anyone send messages as your bot.
 
 ## Choosing venues
 
