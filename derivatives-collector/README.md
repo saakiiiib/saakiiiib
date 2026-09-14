@@ -79,6 +79,27 @@ where liquidations sit — heatmaps are *models* that infer positions from open
 interest and assume common leverage tiers. That is an estimate presented as
 data. Real fills plus real order-book depth are more honest inputs.
 
+## Troubleshooting
+
+If every venue fails, the collector says so plainly and exits with code 1:
+
+```
+WARNING bybit        BTCUSDT        blocked by a network proxy
+ERROR   all 10 venue requests failed — nothing stored
+```
+
+Common causes:
+
+- **"cannot reach host"** — you're offline, or a firewall is in the way.
+- **"blocked by a network proxy"** — a corporate/VPN proxy is intercepting.
+- **"access denied (HTTP 403)"** — that venue blocks your region. Set it to
+  `False` in `config.py`; the others keep working.
+- **"rate limited (HTTP 429)"** — raise `POLL_SECONDS`.
+- **"unexpected response shape"** — that venue changed its API. Only the
+  affected venue stops; the rest carry on.
+
+A single venue failing is never fatal — it is logged and skipped.
+
 ## Notes
 
 - Polling every 5 minutes sits well inside every venue's public rate limits.
@@ -86,6 +107,10 @@ data. Real fills plus real order-book depth are more honest inputs.
 - Rows are keyed on (venue, symbol, timestamp), so re-runs backfill without
   creating duplicates.
 - `derivs.db` is gitignored — your collected data stays local.
+- Funding timestamps are bucketed to the venue's settlement interval, so
+  polling every 5 minutes doesn't store hundreds of duplicate funding rows.
+- `report.py --oi` prints `no history` rather than a misleading `0.00%` when
+  only one sample exists so far.
 
 ## Caution
 

@@ -60,24 +60,36 @@ def oi_change(conn, coin, hours=24):
                  ORDER BY a.ts DESC LIMIT 1),
                (SELECT oi_base FROM open_interest b
                  WHERE b.venue=o.venue AND b.symbol=o.symbol AND b.ts>=?
-                 ORDER BY b.ts ASC LIMIT 1)
+                 ORDER BY b.ts ASC LIMIT 1),
+               (SELECT MAX(ts) - MIN(ts) FROM open_interest c
+                 WHERE c.venue=o.venue AND c.symbol=o.symbol AND c.ts>=?)
         FROM open_interest o
         WHERE o.symbol LIKE ?
         GROUP BY o.venue, o.symbol
-    """, (cutoff, f"%{coin.upper()}%")).fetchall()
+    """, (cutoff, cutoff, f"%{coin.upper()}%")).fetchall()
 
     if not rows:
         print(f"No stored history for {coin}. Let the collector run a while.")
         return
 
     print(f"Open interest change over ~{hours}h\n")
-    print(f"{'VENUE':<13}{'SYMBOL':<16}{'THEN':>14}{'NOW':>14}{'CHANGE':>10}")
-    print("-" * 67)
-    for venue, symbol, now, then in rows:
+    print(f"{'VENUE':<13}{'SYMBOL':<16}{'THEN':>14}{'NOW':>14}{'CHANGE':>12}")
+    print("-" * 69)
+
+    thin = False
+    for venue, symbol, now, then, span_ms in rows:
         if not now or not then:
             continue
-        pct = (now - then) / then * 100 if then else 0
-        print(f"{venue:<13}{symbol:<16}{then:>14,.1f}{now:>14,.1f}{pct:>9.2f}%")
+        # A venue with one snapshot would otherwise report a confident 0.00%.
+        # Only claim a change once the samples actually span some time.
+        if not span_ms or span_ms < 600_000:
+            change, thin = "no history", True
+        else:
+            change = f"{(now - then) / then * 100:.2f}%" if then else "n/a"
+        print(f"{venue:<13}{symbol:<16}{then:>14,.1f}{now:>14,.1f}{change:>12}")
+
+    if thin:
+        print("\n'no history' = only one sample so far; keep collector.py running.")
 
 
 def liquidations(conn, hours=24):

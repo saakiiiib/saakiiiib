@@ -30,6 +30,16 @@ def _now_ms():
     return int(time.time() * 1000)
 
 
+def _funding_bucket(ts_ms, interval_hours):
+    """Snap a timestamp down to its funding period.
+
+    Snapshots are polled far more often than funding actually settles, so
+    without this every poll would store another row for the same period.
+    """
+    step = int(interval_hours * 3600 * 1000)
+    return (ts_ms // step) * step
+
+
 # ---------------------------------------------------------------- Bybit ----
 BYBIT = "https://api.bybit.com"
 
@@ -44,7 +54,8 @@ def bybit_snapshot(symbol="BTCUSDT"):
     return {
         "open_interest": [{"venue": "bybit", "symbol": symbol, "ts": ts,
                            "oi_base": oi_base, "oi_usd": oi_base * last}],
-        "funding": [{"venue": "bybit", "symbol": symbol, "ts": ts,
+        "funding": [{"venue": "bybit", "symbol": symbol,
+                     "ts": _funding_bucket(ts, 8),
                      "rate": float(d["fundingRate"])}],
         "prices": [{"venue": "bybit", "symbol": symbol, "ts": ts, "last": last,
                     "mark": float(d["markPrice"]), "index_px": float(d["indexPrice"])}],
@@ -134,7 +145,8 @@ def hyperliquid_snapshot(coins=("BTC", "ETH", "SOL")):
         oi_base = float(ctx["openInterest"])
         oi_rows.append({"venue": "hyperliquid", "symbol": name, "ts": ts,
                         "oi_base": oi_base, "oi_usd": oi_base * mark})
-        fr_rows.append({"venue": "hyperliquid", "symbol": name, "ts": ts,
+        fr_rows.append({"venue": "hyperliquid", "symbol": name,
+                        "ts": _funding_bucket(ts, 1),
                         "rate": float(ctx["funding"])})
         px_rows.append({"venue": "hyperliquid", "symbol": name, "ts": ts,
                         "last": mark, "mark": mark,
@@ -156,7 +168,8 @@ def binance_snapshot(symbol="BTCUSDT"):
     return {
         "open_interest": [{"venue": "binance", "symbol": symbol, "ts": ts,
                            "oi_base": oi_base, "oi_usd": oi_base * mark}],
-        "funding": [{"venue": "binance", "symbol": symbol, "ts": ts,
+        "funding": [{"venue": "binance", "symbol": symbol,
+                     "ts": _funding_bucket(ts, 8),
                      "rate": float(pi["lastFundingRate"])}],
         "prices": [{"venue": "binance", "symbol": symbol, "ts": ts, "last": mark,
                     "mark": mark, "index_px": float(pi["indexPrice"])}],
