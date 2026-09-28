@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How absorber parameters shape solar-cell performance</title>
+<style>
+html,body{margin:0;height:100%;background:#000}
+body{display:flex;align-items:center;justify-content:center}
+canvas{width:min(100vw,177.78vh);height:auto;aspect-ratio:16/9;display:block}
+[hidden]{display:none!important}
+#b{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font:600 22px system-ui,sans-serif;padding:16px 32px;border:0;border-radius:40px;background:#ffd166;color:#1b1440;cursor:pointer}
+#b:focus-visible,#ctl button:focus-visible{outline:3px solid #fff;outline-offset:3px}
+#ctl{position:fixed;right:16px;bottom:16px;display:flex;gap:8px;opacity:.3;transition:opacity .2s}
+#ctl:hover,#ctl:focus-within{opacity:1}
+#ctl button{width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font:18px system-ui,sans-serif;cursor:pointer}
+#ctl button:hover{background:rgba(255,255,255,.3)}
+</style>
+</head>
+<body>
+<canvas id="c" width="1280" height="720" role="img" aria-label="Animated explainer: how absorber thickness, doping density and defect density change the efficiency, Jsc, Voc and fill factor of a thin-film solar cell."></canvas>
+<button id="b">▶ Play with sound</button>
+<div id="ctl" hidden>
+  <button id="pp" aria-label="Pause" title="Pause / play (space)">⏸</button>
+  <button id="mu" aria-label="Mute" title="Mute (M)">🔊</button>
+  <button id="rp" aria-label="Replay" title="Replay (R)">↺</button>
+</div>
+<script>
+/* draw(t) is a pure function of time.
+   Export: open ?render, call renderFrame(i/FPS) per frame; renderAudioWav() returns base64 WAV.
+   Playback keys: Space = pause/play, M = mute, R = replay.
+
+   CURVES: physics-based illustrative model. To show real SCAPS sweeps paste them below, e.g.
+     SCAPS.thk={x:[0.1,0.2,...],pce:[...],jsc:[...],voc:[...],ff:[...]}
+   (x in µm for thk, cm⁻³ for na / nt; pce in %, jsc in mA/cm², voc in V, ff as a fraction;
+    jsc/voc/ff optional; x may be unevenly spaced, it is resampled onto the axis)
+   keys: thk, na, nt */
+const SCAPS={};
+
+const c=document.getElementById('c').getContext('2d'),W=1280,H=720,DUR=60,FPS=30;
+const cl=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)),lerp=(a,b,x)=>a+(b-a)*x,sm=x=>{x=cl(x);return x*x*(3-2*x)};
+const eob=x=>{x=cl(x);return 1+2.70158*Math.pow(x-1,3)+1.70158*Math.pow(x-1,2)};
+const F="'Segoe UI','Helvetica Neue',Arial,sans-serif";
+let SC=1; /* backing-store scale: keeps text crisp on HiDPI / full-screen; 1 in ?render mode */
+
+/* Safari < 16 / older Firefox have no roundRect */
+if(!c.roundRect)CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){r=Math.min(r,w/2,h/2);this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};
+
+function T(s,x,y,px,a=1,wt='600',col='#fff',al='center'){c.save();c.globalAlpha*=cl(a);c.font=wt+' '+px+'px '+F;c.fillStyle=col;c.textAlign=al;c.textBaseline='middle';c.fillText(s,x,y);c.restore()}
+const dot=(x,y,r,f)=>{c.beginPath();c.arc(x,y,r,0,7);c.fillStyle=f;c.fill()};
+
+/* number formatting: 1×10¹⁶, 3.2×10¹⁷ */
+const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹',sup=n=>String(n).replace(/-/g,'⁻').replace(/\d/g,d=>SUP[d]);
+const sci=x=>{const e=Math.floor(Math.log10(x)+1e-9),m=x/Math.pow(10,e);return(Math.abs(m-1)<.05?'':m.toFixed(1)+'×')+'10'+sup(e)};
+
+/* ---- simple device model: d (µm), Na, Nt (cm⁻³) ---- */
+function ev(d,Na,Nt){
+  const tau=1/(1e-8*Nt+1e-28*Na*Na),D=10/(1+Na/1e18)*.0259,Ld=Math.sqrt(D*tau)*1e4,Wd=Math.min(d,Math.sqrt(9.96e6/Na)*1e4),Lc=Ld+Wd;
+  const co=Lc/d*(1-Math.exp(-d/Lc)),jsc=35*(1-Math.exp(-10*d))*co;
+  const voc=Math.max(.2,Math.min(1.15,.8+.0155*Math.log(1+Na/1e14))-.0466*Math.log(1+d*1e-6/tau)),ff=.84*(.85+.15*co)*(1-.12*Math.exp(-Na/1e15));
+  return{jsc,voc,ff,pce:jsc*voc*ff,Ld,Wd,co}}
+const CFG={
+  thk:{lo:.1,hi:3,log:0,n:'Absorber thickness',u:'µm',f:x=>ev(x,1e16,1e14)},
+  na:{lo:1e13,hi:1e19,log:1,n:'Doping density',u:'cm⁻³',f:x=>ev(1,x,1e14)},
+  nt:{lo:1e12,hi:1e18,log:1,n:'Defect density',u:'cm⁻³',f:x=>ev(1,1e16,x)}};
+const xat=(k,p)=>{const g=CFG[k];return g.log?g.lo*Math.pow(g.hi/g.lo,p):lerp(g.lo,g.hi,p)};
+
+/* SCAPS sweeps -> 81 points evenly spaced along the (log) axis, so every scene can index by position */
+const SER=['pce','jsc','voc','ff'],USED={};
+function fromScaps(k,s,g){
+  const bad=m=>{console.warn('SCAPS.'+k+' ignored: '+m);return null};
+  if(!s||!Array.isArray(s.x)||!Array.isArray(s.pce)||s.x.length<2)return bad('needs x and pce arrays with ≥2 points');
+  if(SER.some(j=>s[j]&&s[j].length!==s.x.length))return bad('series lengths differ from x');
+  if(g.log&&s.x.some(v=>!(v>0)))return bad('x must be > 0 on a log axis');
+  const ix=s.x.map((_,i)=>i).sort((a,b)=>s.x[a]-s.x[b]),xs=ix.map(i=>s.x[i]),pos=g.log?Math.log:(v=>v);
+  g.lo=xs[0];g.hi=xs[xs.length-1];
+  const a=[];
+  for(let i=0;i<=80;i++){
+    const x=xat(k,i/80);let j=xs.findIndex(v=>v>x);j=j<0?xs.length-2:Math.max(0,j-1);
+    const q=cl((pos(x)-pos(xs[j]))/(pos(xs[j+1])-pos(xs[j]))),r={x};
+    for(const m of SER)r[m]=s[m]?lerp(s[m][ix[j]],s[m][ix[j+1]],q):NaN;
+    a.push(r)}
+  return a}
+const SW={};
+for(const k in CFG){
+  const g=CFG[k],a=SCAPS[k]&&fromScaps(k,SCAPS[k],g);
+  USED[k]=!!a;
+  if(a)SW[k]=a;
+  else{SW[k]=[];for(let i=0;i<=80;i++){const x=xat(k,i/80);SW[k].push({x,...g.f(x)})}}}
+const anyScaps=Object.values(USED).some(Boolean);
+/* one y-scale for every chart so the three sweeps are directly comparable */
+const YMAX=Math.max(5,Math.ceil(Math.max(...Object.values(SW).flatMap(a=>a.map(r=>r.pce)).filter(v=>v>=0))/5)*5);
+
+const samp=(k,p)=>{const a=SW[k],f=p*(a.length-1),i=Math.min(a.length-2,Math.floor(f)),q=f-i,r={x:xat(k,p)};for(const j of SER)r[j]=lerp(a[i][j],a[i+1][j],q);return r};
+const fmt=(k,x)=>k=='thk'?x.toFixed(2)+' µm':sci(x)+' cm⁻³';
+
+/* x-axis ticks as [position 0..1, label] */
+function ticks(k,max){
+  const g=CFG[k],out=[];
+  if(g.log){
+    const e0=Math.ceil(Math.log10(g.lo)-1e-9),e1=Math.floor(Math.log10(g.hi)+1e-9),st=Math.max(1,Math.ceil((e1-e0+1)/max));
+    for(let e=e0;e<=e1;e+=st)out.push([(e-Math.log10(g.lo))/(Math.log10(g.hi)-Math.log10(g.lo)),'10'+sup(e)])}
+  else{
+    const r=(g.hi-g.lo)/max,ex=Math.pow(10,Math.floor(Math.log10(r))),f=r/ex,st=(f<1.5?1:f<3.5?2:f<7.5?5:10)*ex;
+    for(let v=Math.ceil(g.lo/st-1e-9)*st;v<=g.hi+1e-9;v+=st)out.push([(v-g.lo)/(g.hi-g.lo),parseFloat(v.toFixed(2))+''])}
+  return out}
+
+function bg(t){
+  const g=c.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0a1024');g.addColorStop(1,'#1b1440');c.fillStyle=g;c.fillRect(0,0,W,H);
+  const r=c.createRadialGradient(640,0,10,640,0,520);r.addColorStop(0,'rgba(255,209,102,.22)');r.addColorStop(1,'rgba(255,209,102,0)');c.fillStyle=r;c.fillRect(0,0,W,H);
+  for(let k=0;k<50;k++)dot((k*97+t*4)%W,(k*53)%H,1.5,'rgba(255,255,255,'+(.25+.25*Math.sin(t*2+k))+')')}
+
+function chart(k,X,Y,w,h,p,m,ann){
+  const g=CFG[k],a=SW[k],n=a.length-1,fs=m?17:22,yy=v=>Y+h-cl(v,0,YMAX)/YMAX*h,ys=YMAX<=30?5:10,cur=samp(k,p);
+  c.strokeStyle='rgba(255,255,255,.15)';c.lineWidth=1;
+  for(let v=0;v<=YMAX;v+=ys){c.beginPath();c.moveTo(X,yy(v));c.lineTo(X+w,yy(v));c.stroke();T(v+'',X-10,yy(v),fs,.8,'400','#cfd8ff','right')}
+  c.strokeStyle='rgba(255,255,255,.6)';c.lineWidth=3;c.beginPath();c.moveTo(X,Y);c.lineTo(X,Y+h);c.lineTo(X+w,Y+h);c.stroke();
+  for(const[q,s]of ticks(k,m?3:6)){c.strokeStyle='rgba(255,255,255,.6)';c.lineWidth=2;c.beginPath();c.moveTo(X+q*w,Y+h);c.lineTo(X+q*w,Y+h+6);c.stroke();T(s,X+q*w,Y+h+fs+8,fs,.85,'400','#cfd8ff')}
+  T(g.n+' ('+g.u+')',X+w/2,Y+h+fs*2+16,fs+2,1,'500','#fff');T('PCE (%)',X,Y-16,fs,1,'500','#fff','left');
+  const curve=()=>{c.beginPath();for(let i=0;i<=p*n;i++)c.lineTo(X+i/n*w,yy(a[i].pce));c.lineTo(X+p*w,yy(cur.pce))};
+  if(p>0){curve();c.lineTo(X+p*w,Y+h);c.lineTo(X,Y+h);c.closePath();c.fillStyle='rgba(255,209,102,.13)';c.fill()}
+  c.strokeStyle='#ffd166';c.lineWidth=m?4:5;c.lineJoin='round';curve();c.stroke();
+  if(!m){dot(X+p*w,yy(cur.pce),9,'#fff');dot(X+p*w,yy(cur.pce),16,'rgba(255,255,255,.25)')}
+  if(ann>0){
+    let mx=0,im=0;a.forEach((r,i)=>{if(r.pce>mx){mx=r.pce;im=i}});
+    c.save();c.globalAlpha*=ann;c.font='600 '+fs+'px '+F;
+    if(k=='nt'){const j=a.findIndex(r=>r.pce<.9*mx);if(j>0){const s='PCE −10% at '+fmt(k,a[j].x);dot(X+j/n*w,yy(a[j].pce),10,'#ff5d8f');T(s,Math.min(X+j/n*w+14,X+w-c.measureText(s).width),yy(a[j].pce)-26,fs,1,'600','#ff9bb3','left')}}
+    else{const s='optimum ≈ '+fmt(k,a[im].x),hw=c.measureText(s).width/2;dot(X+im/n*w,yy(mx),11,'#57cc99');T(s,cl(X+im/n*w,X+hw,X+w-hw),yy(mx)-28,fs,1,'600','#8ce99a')}
+    c.restore()}}
+
+function readouts(s,X,Y){
+  const v=(x,d,u)=>isNaN(x)?'–':x.toFixed(d)+u;
+  [['Jsc',v(s.jsc,1,' mA/cm²')],['Voc',v(s.voc,2,' V')],['FF',isNaN(s.ff)?'–':(s.ff*100).toFixed(0)+' %'],['PCE',v(s.pce,1,' %')]].forEach((r,i)=>{
+    const x=X+i*132;c.fillStyle=i==3?'rgba(255,209,102,.22)':'rgba(255,255,255,.08)';c.beginPath();c.roundRect(x,Y,120,74,12);c.fill();
+    T(r[0],x+60,Y+18,20,1,'400','#cfd8ff');T(r[1],x+60,Y+50,i==0?21:26,1,'700',i==3?'#ffd166':'#fff')})}
+
+function pairs(x,y,w,h,co,u){
+  for(let k=0;k<8;k++){
+    const px=x+(k+.5)*w/8,gy=y+h*(.25+.5*((k*.37)%1)),ph=(u*.5+k*.13)%1,ok=((k*.618)%1)<co,q=ok?sm(ph):ph*.3;
+    c.save();c.globalAlpha*=ok||ph<.55?1:0;dot(px-(ok?0:4),gy-(gy-y-6)*q,6,'#4cc9f0');dot(px+(ok?0:4),gy+(y+h-6-gy)*q,6,'#ff5d8f');c.restore();
+    if(!ok&&ph>.5&&ph<.72){c.save();c.globalAlpha*=(.72-ph)/.22;dot(px,gy,15,'#fff');c.restore()}}}
+
+/* key for the moving dots, and a badge saying where the curve comes from */
+function legend(X,Y,a){
+  c.save();c.globalAlpha*=cl(a);c.font='400 18px '+F;
+  let x=X;[['electron','#4cc9f0'],['hole','#ff5d8f'],['recombination','#fff']].forEach(([s,col])=>{
+    dot(x,Y,6,col);T(s,x+14,Y,18,1,'400','#cfd8ff','left');x+=14+c.measureText(s).width+26});
+  c.restore()}
+function badge(k,a){
+  const s=USED[k]?'SCAPS simulation':'Illustrative model';
+  c.save();c.globalAlpha*=cl(a);c.font='500 16px '+F;const w=c.measureText(s).width+28;
+  c.strokeStyle='rgba(255,255,255,.35)';c.lineWidth=1.5;c.beginPath();c.roundRect(W-24-w,20,w,32,16);c.stroke();
+  T(s,W-24-w/2,36,16,1,'500','#cfd8ff');c.restore()}
+
+const TT={thk:'Effect of absorber thickness',na:'Effect of doping density',nt:'Effect of defect density'};
+const FM={thk:'absorbed ≈ 1 − e^(−αd) · Ld = √(Dτ)',na:'Wd = √(2εVbi / qNa) · Auger: 1/τ ∝ Na²',nt:'τ = 1 / (σ v Nt) · Ld = √(Dτ)'};
+const CP={
+  thk:[[1.5,5.5,'Thin absorber: sunlight is only partly absorbed → low Jsc'],[5.5,9.5,'Thicker: more photons absorbed, but carriers travel farther'],[9.5,14.5,'Beyond Ld, recombination cuts Voc, FF and Jsc → optimum thickness']],
+  na:[[1.5,5.5,'Low doping: weak field, lower Voc, higher series resistance'],[5.5,9.5,'Moderate doping: Voc rises and the depletion region stays wide'],[9.5,14.5,'Very high doping: narrow depletion + Auger loss collapse PCE']],
+  nt:[[1.5,5.5,'Low Nt: long lifetime and diffusion length, near-ideal collection'],[5.5,9.5,'Rising Nt: SRH recombination shortens the diffusion length'],[9.5,14.5,'High Nt: Voc, Jsc and FF collapse, so PCE falls sharply']]};
+
+function param(k,u){
+  const g=CFG[k],p=sm((u-2)/9),s=samp(k,p),x=s.x,e=g.f(x),hA=k=='thk'?40+x*70:200,X=190,w=320;let y=150;
+  T(TT[k],640,60,46,sm(u/.5),'700');badge(k,sm(u/.5));
+  c.strokeStyle='rgba(255,209,102,.7)';c.lineWidth=3;for(let j=0;j<5;j++){const xx=X+30+j*65,yy=96+((u*60+j*20)%40);c.beginPath();c.moveTo(xx,yy);c.lineTo(xx,yy+14);c.stroke()}
+  T('sunlight',X-14,118,20,sm(u-.5),'500','#ffd166','right');
+  const L=(h,col,nm)=>{c.fillStyle=col;c.fillRect(X,y,w,h-2);T(nm,X-14,y+h/2,20,1,'500','#fff','right');y+=h};
+  L(24,'#8ecae6','ITO');L(30,'#7b6cf6','WS₂');const yA=y;L(hA,'#b5483a','Absorber');L(30,'#2fa4a0','PEDOT:PSS');L(24,'#ffc531','Au');
+  if(k=='thk'){const gr=c.createLinearGradient(0,yA,0,yA+hA);for(let j=0;j<=4;j++)gr.addColorStop(j/4,'rgba(255,225,130,'+.7*Math.exp(-10*x*j/4)+')');c.fillStyle=gr;c.fillRect(X,yA,w,hA-2)}
+  if(k=='na'){
+    const hd=e.Wd*hA;c.fillStyle='rgba(76,201,240,.3)';c.fillRect(X,yA,w,hd);c.setLineDash([8,6]);c.strokeStyle='#4cc9f0';c.lineWidth=2;c.beginPath();c.moveTo(X,yA+hd);c.lineTo(X+w,yA+hd);c.stroke();c.setLineDash([]);
+    T('depletion',X+w+12,yA+hd/2,20,1,'400','#8fdcf5','left');T('neutral',X+w+12,yA+(hd+hA)/2,20,hd<hA-30?1:0,'400','#cfd8ff','left');
+    const n=Math.round(4+(Math.log10(x)-13)*8);for(let j=0;j<n;j++)dot(X+8+((j*.618)%1)*(w-16),yA+8+((j*.382+.07*j)%1)*(hA-16),3.5,'#ff9bb3')}
+  if(k=='nt'){
+    const n=Math.round(3+(Math.log10(x)-12)*12);for(let j=0;j<n;j++){const tx=X+8+((j*.618)%1)*(w-16),ty=yA+8+((j*j*.0723+j*.31)%1)*(hA-16);dot(tx,ty,5,'#2b1b3d');c.strokeStyle='#fff';c.lineWidth=1.5;c.beginPath();c.arc(tx,ty,5,0,7);c.stroke()}}
+  pairs(X,yA,w,hA,e.co,u);
+  T(k=='thk'?'d = '+x.toFixed(2)+' µm · Ld = '+e.Ld.toFixed(1)+' µm':k=='na'?'Na = '+fmt(k,x)+' · Wd = '+e.Wd.toFixed(2)+' µm':'Nt = '+fmt(k,x)+' · Ld = '+(e.Ld<1?e.Ld.toFixed(2):e.Ld.toFixed(1))+' µm',340,568,26,sm(u-1.5),'600','#fff');
+  T(FM[k],340,600,22,sm(u-1.5),'400','#cfd8ff');
+  legend(X-30,632,sm(u-2));
+  chart(k,700,150,500,300,p,0,sm((u-11.2)/.6));readouts(s,700,548);
+  CP[k].forEach(([a,b,m])=>T(m,640,682,30,sm((u-a)/.4)*(1-sm((u-b+.4)/.4)),'500','#ffd166'))}
+
+function title(u){
+  const e=eob(u/1);c.save();c.translate(640,270);c.scale(e,e);T('How absorber parameters',0,-45,72,1,'700');T('shape solar-cell performance',0,45,72,1,'700','#ffd166');c.restore();
+  ['Thickness','Doping density','Defect density'].forEach((s,i)=>{const q=eob((u-1.5-i*.4)/.5);c.save();c.globalAlpha*=cl(q);c.fillStyle='rgba(255,255,255,.12)';c.beginPath();c.roundRect(200+i*300,460,280,70,35);c.fill();c.restore();T(s,340+i*300,495,32,q)})}
+
+function summary(u){
+  T('Putting it together',640,70,52,sm(u/.5),'700');
+  ['thk','na','nt'].forEach((k,i)=>{const X=100+i*400;T(CFG[k].n,X+150,150,28,sm((u-.3-i*.5)/.5),'600','#ffd166');chart(k,X,190,300,220,sm((u-.8-i*.8)/2.5),1,sm((u-3.6-i*.8)/.6))});
+  T('Thick enough to absorb, doped enough for a strong field,',640,560,32,sm((u-5.5)/.6),'500','#fff');
+  T('and defect-free enough that Ld stays above d.',640,602,32,sm((u-5.9)/.6),'500','#fff');
+  T(anyScaps?'Curves from SCAPS simulation sweeps.':'Illustrative physics-based trends: paste your SCAPS sweeps to plot exact curves.',640,665,24,sm((u-7)/.6),'400','#cfd8ff')}
+
+const S=[[0,5,title],[5,20,u=>param('thk',u)],[20,35,u=>param('na',u)],[35,50,u=>param('nt',u)],[50,60,summary]];
+function draw(t){
+  t=cl(t,0,DUR);c.setTransform(SC,0,0,SC,0,0);c.globalAlpha=1;bg(t);
+  for(const[a,b,f]of S)if(t>=a&&t<b){c.save();c.globalAlpha=Math.min(cl((t-a)/.4),cl((b-t)/.4));f(t-a);c.restore()}
+  c.fillStyle='rgba(255,255,255,.7)';c.fillRect(0,H-6,W*t/DUR,6);
+  c.fillStyle='#000';c.globalAlpha=Math.max(cl((t-59.2)/.8),1-cl(t/.4));c.fillRect(0,0,W,H);c.globalAlpha=1}
+
+/* synthesized music: 120 BPM, pad + major-pentatonic arp + kick/hat, chime at each section */
+function music(x,o,dest=x.destination){
+  const m=x.createGain();m.gain.setValueAtTime(.55,o);m.gain.setValueAtTime(.55,o+57.5);m.gain.linearRampToValueAtTime(0,o+DUR);m.connect(dest);
+  const f=n=>440*Math.pow(2,(n-69)/12);
+  const N=(n,s,d,ty,v)=>{const a=x.createOscillator(),g=x.createGain();a.type=ty;a.frequency.value=f(n);g.gain.setValueAtTime(.0001,o+s);g.gain.exponentialRampToValueAtTime(v,o+s+.02);g.gain.exponentialRampToValueAtTime(.0001,o+s+d);a.connect(g);g.connect(m);a.start(o+s);a.stop(o+s+d+.05)};
+  const nb=x.createBuffer(1,x.sampleRate/5,x.sampleRate),nd=nb.getChannelData(0);let z=1;for(let i=0;i<nd.length;i++)nd[i]=(z=(z*16807)%2147483647)/1073741823.5-1;
+  const Ht=s=>{const a=x.createBufferSource(),fl=x.createBiquadFilter(),g=x.createGain();a.buffer=nb;fl.type='highpass';fl.frequency.value=8000;g.gain.setValueAtTime(.1,o+s);g.gain.exponentialRampToValueAtTime(.0001,o+s+.04);a.connect(fl);fl.connect(g);g.connect(m);a.start(o+s);a.stop(o+s+.05)};
+  const K=s=>{const a=x.createOscillator(),g=x.createGain();a.frequency.setValueAtTime(140,o+s);a.frequency.exponentialRampToValueAtTime(45,o+s+.15);g.gain.setValueAtTime(.6,o+s);g.gain.exponentialRampToValueAtTime(.0001,o+s+.25);a.connect(g);g.connect(m);a.start(o+s);a.stop(o+s+.3)};
+  const R=[48,43,45,41],PN=[0,2,4,7,9,12,9,7];
+  for(let b=0;b<30;b++){const s=b*2,r=R[b%4];
+    [0,4,7].forEach(v=>N(r+12+v,s,2,'triangle',.06));N(r,s,.9,'triangle',.3);if(b>1)N(r,s+1,.9,'triangle',.22);
+    for(let k=0;k<8;k++)N(72+PN[(k+b)%8],s+k*.25,.3,'triangle',.1);
+    if(b>2)for(let k=0;k<4;k++){K(s+k*.5);Ht(s+k*.5+.25)}}
+  [5,20,35,50].forEach(s=>{N(88,s,.9,'sine',.25);N(95,s+.12,.9,'sine',.18)})}
+function wav(b){const n=b.length,ch=b.numberOfChannels,d=new DataView(new ArrayBuffer(44+n*ch*2)),w=(o,s)=>[...s].forEach((v,i)=>d.setUint8(o+i,v.charCodeAt(0)));
+  w(0,'RIFF');d.setUint32(4,36+n*ch*2,1);w(8,'WAVEfmt ');d.setUint32(16,16,1);d.setUint16(20,1,1);d.setUint16(22,ch,1);d.setUint32(24,b.sampleRate,1);d.setUint32(28,b.sampleRate*ch*2,1);d.setUint16(32,ch*2,1);d.setUint16(34,16,1);w(36,'data');d.setUint32(40,n*ch*2,1);
+  let o=44;for(let i=0;i<n;i++)for(let k=0;k<ch;k++){d.setInt16(o,cl(b.getChannelData(k)[i],-1,1)*32767,1);o+=2}return d.buffer}
+
+window.DURATION=DUR;window.FPS=FPS;window.renderFrame=t=>draw(t);
+window.renderAudioWav=async()=>{const x=new OfflineAudioContext(2,44100*DUR,44100);music(x,0);const u=new Uint8Array(wav(await x.startRendering()));let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)};
+
+/* ---- playback: start / pause / mute / replay ---- */
+const $=id=>document.getElementById(id),RENDER=location.search.includes('render'),btn=$('b'),ctl=$('ctl');
+let ctx,t0,gain,paused=false,muted=false,raf=0,lastT=14;
+function fit(){ /* match the backing store to the on-screen size */
+  if(RENDER)return;
+  SC=cl(c.canvas.getBoundingClientRect().width*(window.devicePixelRatio||1)/W,.5,3);
+  c.canvas.width=Math.round(W*SC);c.canvas.height=Math.round(H*SC)}
+function sync(){
+  $('pp').textContent=paused?'▶':'⏸';$('pp').setAttribute('aria-label',paused?'Play':'Pause');
+  $('mu').textContent=muted?'🔇':'🔊';$('mu').setAttribute('aria-label',muted?'Unmute':'Mute')}
+function frame(){
+  const t=ctx.currentTime-t0;lastT=t;draw(t);
+  if(t>=DUR){btn.textContent='↺ Replay';btn.hidden=false;return}
+  if(!paused)raf=requestAnimationFrame(frame)}
+function start(){
+  cancelAnimationFrame(raf);if(ctx)ctx.close();
+  ctx=new AudioContext();gain=ctx.createGain();gain.gain.value=muted?0:1;gain.connect(ctx.destination);
+  t0=ctx.currentTime+.15;music(ctx,t0,gain);paused=false;
+  btn.hidden=true;ctl.hidden=false;sync();frame()}
+function togglePause(){
+  if(!ctx||lastT>=DUR)return;
+  if(paused){paused=false;ctx.resume();frame()}else{paused=true;ctx.suspend()}
+  sync()}
+function toggleMute(){muted=!muted;if(gain)gain.gain.value=muted?0:1;sync()}
+
+if(RENDER){btn.remove();ctl.remove();draw(0)}
+else{
+  fit();draw(lastT);
+  addEventListener('resize',()=>{fit();draw(lastT)});
+  btn.onclick=start;$('rp').onclick=start;$('pp').onclick=togglePause;$('mu').onclick=toggleMute;
+  addEventListener('keydown',e=>{
+    if(e.ctrlKey||e.metaKey||e.altKey||!ctx||(e.target.tagName=='BUTTON'&&(e.key==' '||e.key=='Enter')))return;
+    const k=e.key.toLowerCase();
+    if(k==' '||k=='k'){e.preventDefault();togglePause()}else if(k=='m')toggleMute();else if(k=='r')start()})}
+</script>
+</body>
+</html>
