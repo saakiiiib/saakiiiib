@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Absorber Thickness in Detail</title>
+<style>
+html,body{margin:0;height:100%;background:#000}
+body{display:flex;align-items:center;justify-content:center}
+canvas{width:min(100vw,177.78vh);height:auto;aspect-ratio:16/9;display:block}
+[hidden]{display:none!important}
+#b{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);font:600 22px system-ui,sans-serif;padding:16px 32px;border:0;border-radius:40px;background:#ffd166;color:#1b1440;cursor:pointer}
+#b:focus-visible,#ctl button:focus-visible{outline:3px solid #fff;outline-offset:3px}
+#ctl{position:fixed;right:16px;bottom:16px;display:flex;gap:8px;opacity:.3;transition:opacity .2s}
+#ctl:hover,#ctl:focus-within{opacity:1}
+#ctl button{width:40px;height:40px;border:0;border-radius:50%;background:rgba(255,255,255,.16);color:#fff;font:18px system-ui,sans-serif;cursor:pointer}
+#ctl button:hover{background:rgba(255,255,255,.3)}
+</style>
+</head>
+<body>
+<canvas id="c" width="1280" height="720" role="img" aria-label="Animated 30-second explainer of how absorber thickness sets light absorption, carrier collection, photocurrent and power conversion efficiency in a thin-film solar cell."></canvas>
+<button id="b">▶ Play with sound</button>
+<div id="ctl" hidden>
+  <button id="pp" aria-label="Pause" title="Pause / play (space)">⏸</button>
+  <button id="mu" aria-label="Mute" title="Mute (M)">🔊</button>
+  <button id="rp" aria-label="Replay" title="Replay (R)">↺</button>
+</div>
+<script>
+/* Thickness deep dive, 30 s. draw(t) is a pure function of time.
+   Export: open ?render, call renderFrame(i/FPS) per frame; renderAudioWav() returns base64 WAV.
+   Keys: Space = pause/play, M = mute, R = replay.
+   Same illustrative device model as absorber-parameters.html. Edit NA / NT to change the cell. */
+const NA=1e16,NT=1e14,ALPHA=10,LO=.05,HI=3,N=80; /* doping & defect density (cm⁻³), absorption coeff (µm⁻¹), thickness range (µm) */
+const c=document.getElementById('c').getContext('2d'),W=1280,H=720,DUR=30,FPS=30;
+const cl=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)),lerp=(a,b,x)=>a+(b-a)*x,sm=x=>{x=cl(x);return x*x*(3-2*x)};
+const eob=x=>{x=cl(x);return 1+2.70158*Math.pow(x-1,3)+1.70158*Math.pow(x-1,2)};
+const F="'Segoe UI','Helvetica Neue',Arial,sans-serif";
+let SC=1;
+if(!c.roundRect)CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){r=Math.min(r,w/2,h/2);this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath()};
+function T(s,x,y,px,a=1,wt='600',col='#fff',al='center'){c.save();c.globalAlpha*=cl(a);c.font=wt+' '+px+'px '+F;c.fillStyle=col;c.textAlign=al;c.textBaseline='middle';c.fillText(s,x,y);c.restore()}
+const dot=(x,y,r,f)=>{c.beginPath();c.arc(x,y,r,0,7);c.fillStyle=f;c.fill()};
+const SUP='⁰¹²³⁴⁵⁶⁷⁸⁹',sup=n=>String(n).replace(/-/g,'⁻').replace(/\d/g,d=>SUP[d]);
+
+/* ---- device model ---- */
+function ev(d,Na,Nt){
+  const tau=1/(1e-8*Nt+1e-28*Na*Na),D=10/(1+Na/1e18)*.0259,Ld=Math.sqrt(D*tau)*1e4,Wd=Math.min(d,Math.sqrt(9.96e6/Na)*1e4),Lc=Ld+Wd;
+  const co=Lc/d*(1-Math.exp(-d/Lc)),jsc=35*(1-Math.exp(-ALPHA*d))*co;
+  const voc=Math.max(.2,Math.min(1.15,.8+.0155*Math.log(1+Na/1e14))-.0466*Math.log(1+d*1e-6/tau)),ff=.84*(.85+.15*co)*(1-.12*Math.exp(-Na/1e15));
+  return{jsc,voc,ff,pce:jsc*voc*ff,Ld,Wd,Lc,co}}
+/* thickness sweep on a log axis, 81 samples */
+const TAB=[];for(let i=0;i<=N;i++){const d=LO*Math.pow(HI/LO,i/N);TAB.push({d,A:1-Math.exp(-ALPHA*d),...ev(d,NA,NT)})}
+const KEYS=['A','co','jsc','voc','ff','pce','Ld','Wd','Lc'];
+function at(p){const f=p*N,i=Math.min(N-1,Math.floor(f)),q=f-i,r={d:LO*Math.pow(HI/LO,p)};for(const k of KEYS)r[k]=lerp(TAB[i][k],TAB[i+1][k],q);return r}
+const xpos=d=>Math.log(d/LO)/Math.log(HI/LO);
+const best=k=>TAB.reduce((b,r)=>r[k]>b[k]?r:b,TAB[0]);
+const BP=best('pce'),BJ=best('jsc');
+let S0,S1;{const lim=.95*BP.pce,ok=TAB.filter(r=>r.pce>=lim);S0=ok[0].d;S1=ok[ok.length-1].d}
+const optAt=Nt=>{let b=0,bd=LO;for(let i=0;i<=300;i++){const d=LO*Math.pow(HI/LO,i/300),e=ev(d,NA,Nt).pce;if(e>b){b=e;bd=d}}return bd};
+const D95=Math.log(20)/ALPHA;
+
+/* ---- shared drawing ---- */
+function bg(t){
+  const g=c.createLinearGradient(0,0,0,H);g.addColorStop(0,'#0a1024');g.addColorStop(1,'#1b1440');c.fillStyle=g;c.fillRect(0,0,W,H);
+  const r=c.createRadialGradient(640,0,10,640,0,520);r.addColorStop(0,'rgba(255,209,102,.22)');r.addColorStop(1,'rgba(255,209,102,0)');c.fillStyle=r;c.fillRect(0,0,W,H);
+  for(let k=0;k<50;k++)dot((k*97+t*4)%W,(k*53)%H,1.5,'rgba(255,255,255,'+(.25+.25*Math.sin(t*2+k))+')')}
+function pill(s,a,x=24,al='left'){
+  c.save();c.globalAlpha*=cl(a);c.font='500 16px '+F;const w=c.measureText(s).width+28,X=al=='left'?x:x-w;
+  c.strokeStyle='rgba(255,255,255,.35)';c.lineWidth=1.5;c.beginPath();c.roundRect(X,20,w,32,16);c.stroke();T(s,X+w/2,36,16,1,'500','#cfd8ff');c.restore()}
+const badge=a=>pill('Illustrative model',a,W-24,'right');
+function caps(list,u){list.forEach(([a,b,m])=>T(m,640,682,30,sm((u-a)/.4)*(1-sm((u-b+.4)/.4)),'500','#ffd166'))}
+function tile(x,y,w,h,label,val,hi,sub){
+  c.fillStyle=hi?'rgba(255,209,102,.22)':'rgba(255,255,255,.08)';c.beginPath();c.roundRect(x,y,w,h,12);c.fill();
+  T(label,x+w/2,y+18,20,1,'400','#cfd8ff');T(val,x+w/2,y+50,sub?24:26,1,'700',hi?'#ffd166':'#fff')}
+
+function stack(X,w,d,u){
+  let y=150;const hA=40+d*70;
+  c.strokeStyle='rgba(255,209,102,.7)';c.lineWidth=3;for(let j=0;j<5;j++){const xx=X+20+j*(w-40)/4,yy=96+((u*60+j*20)%40);c.beginPath();c.moveTo(xx,yy);c.lineTo(xx,yy+14);c.stroke()}
+  T('sunlight',X-14,118,20,1,'500','#ffd166','right');
+  const L=(h,col,nm)=>{c.fillStyle=col;c.fillRect(X,y,w,h-2);T(nm,X-14,y+h/2,20,1,'500','#fff','right');y+=h};
+  L(24,'#8ecae6','ITO');L(30,'#7b6cf6','WS₂');const yA=y;L(hA,'#b5483a','Absorber');L(30,'#2fa4a0','PEDOT:PSS');L(24,'#ffc531','Au');
+  return{yA,hA}}
+function dim(X,y0,y1,label){
+  c.strokeStyle='#ffd166';c.lineWidth=2;c.beginPath();c.moveTo(X,y0);c.lineTo(X,y1);c.moveTo(X-6,y0);c.lineTo(X+6,y0);c.moveTo(X-6,y1);c.lineTo(X+6,y1);c.stroke();
+  T(label,X+14,(y0+y1)/2,22,1,'600','#ffd166','left')}
+function legend(X,Y,a){
+  c.save();c.globalAlpha*=cl(a);c.font='400 18px '+F;let x=X;
+  [['electron','#4cc9f0'],['hole','#ff5d8f'],['recombination','#fff']].forEach(([s,col])=>{dot(x,Y,6,col);T(s,x+14,Y,18,1,'400','#cfd8ff','left');x+=14+c.measureText(s).width+26});c.restore()}
+function pairs(x,y,w,h,co,u){
+  for(let k=0;k<8;k++){
+    const px=x+(k+.5)*w/8,gy=y+h*(.25+.5*((k*.37)%1)),ph=(u*.5+k*.13)%1,ok=((k*.618)%1)<co,q=ok?sm(ph):ph*.3;
+    c.save();c.globalAlpha*=ok||ph<.55?1:0;dot(px-(ok?0:4),gy-(gy-y-6)*q,6,'#4cc9f0');dot(px+(ok?0:4),gy+(y+h-6-gy)*q,6,'#ff5d8f');c.restore();
+    if(!ok&&ph>.5&&ph<.72){c.save();c.globalAlpha*=(.72-ph)/.22;dot(px,gy,15,'#fff');c.restore()}}}
+
+/* o: y0,y1,ys (y range/step), yl (label), fy (tick format), mini, s:[{g,col,lw,fill}], leg:[[label,col]], marks:[{d,y,col,text}] */
+function plot(X,Y,w,h,o,p,ann=0){
+  const m=o.mini,fs=m?17:22,yy=v=>Y+h-cl((v-o.y0)/(o.y1-o.y0))*h,cur=at(p);
+  for(let v=o.y0;v<=o.y1+1e-9;v+=o.ys){c.strokeStyle='rgba(255,255,255,.15)';c.lineWidth=1;c.beginPath();c.moveTo(X,yy(v));c.lineTo(X+w,yy(v));c.stroke();T(o.fy?o.fy(v):v+'',X-10,yy(v),fs,.8,'400','#cfd8ff','right')}
+  c.strokeStyle='rgba(255,255,255,.6)';c.lineWidth=3;c.beginPath();c.moveTo(X,Y);c.lineTo(X,Y+h);c.lineTo(X+w,Y+h);c.stroke();
+  (m?[.1,1]:[.1,.3,1,3]).forEach(v=>{const q=xpos(v);c.strokeStyle='rgba(255,255,255,.6)';c.lineWidth=2;c.beginPath();c.moveTo(X+q*w,Y+h);c.lineTo(X+q*w,Y+h+6);c.stroke();T(v+'',X+q*w,Y+h+fs+8,fs,.85,'400','#cfd8ff')});
+  T(m?'d (µm, log)':'Absorber thickness d (µm, log scale)',X+w/2,Y+h+fs*2+16,fs+(m?0:2),m?.8:1,'500',m?'#cfd8ff':'#fff');
+  T(o.yl,X,Y-16,fs,1,'500','#fff','left');
+  if(o.leg){let x=X+w;c.save();c.font='400 18px '+F;[...o.leg].reverse().forEach(([s,col])=>{const tw=c.measureText(s).width;T(s,x,Y-16,18,1,'400','#cfd8ff','right');c.fillStyle=col;c.fillRect(x-tw-24,Y-22,14,12);x-=tw+46});c.restore()}
+  o.s.forEach(s=>{
+    const curve=()=>{c.beginPath();for(let i=0;i<=p*N;i++)c.lineTo(X+i/N*w,yy(s.g(TAB[i])));c.lineTo(X+p*w,yy(s.g(cur)))};
+    if(s.fill&&p>0){curve();c.lineTo(X+p*w,Y+h);c.lineTo(X,Y+h);c.closePath();c.fillStyle='rgba(255,209,102,.13)';c.fill()}
+    c.strokeStyle=s.col;c.lineWidth=s.lw;c.lineJoin='round';curve();c.stroke();
+    if(!m&&p>0&&p<1){dot(X+p*w,yy(s.g(cur)),s.lw+3,'#fff');dot(X+p*w,yy(s.g(cur)),s.lw+9,'rgba(255,255,255,.25)')}});
+  if(ann>0&&o.marks){c.save();c.globalAlpha*=ann;c.font='600 '+fs+'px '+F;
+    o.marks.forEach(mk=>{const px=X+xpos(mk.d)*w,py=yy(mk.y),tw=c.measureText(mk.text).width/2,dy=mk.dy||(mk.up?-30:34),ly=py+dy;
+      if(Math.abs(dy)>50){c.strokeStyle=mk.col;c.lineWidth=1.5;c.setLineDash([4,4]);c.beginPath();c.moveTo(px,py+(dy>0?12:-12));c.lineTo(px,ly+(dy>0?-16:16));c.stroke();c.setLineDash([])}
+      dot(px,py,10,mk.col);T(mk.text,cl(px,X+tw,X+w-tw),ly,fs,1,'600',mk.col)});c.restore()}}
+
+/* ---- scenes ---- */
+function title(u){
+  const e=eob(u/.9);c.save();c.translate(640,255);c.scale(e,e);T('Absorber thickness',0,-40,78,1,'700');T('in detail',0,50,78,1,'700','#ffd166');c.restore();
+  ['Absorb','Collect','Multiply','Optimize'].forEach((s,i)=>{const q=eob((u-.7-i*.25)/.4);c.save();c.globalAlpha*=cl(q);c.fillStyle='rgba(255,255,255,.12)';c.beginPath();c.roundRect(150+i*260,455,230,66,33);c.fill();c.restore();T(s,265+i*260,488,30,q)})}
+
+function absorb(u){
+  const p=sm((u-.8)/3.6),r=at(p),X=170,w=280,a=sm(u/.5);
+  T('Thicker absorbs more light',640,60,46,a,'700');pill('Step 1 of 4 · Absorption',a);badge(a);
+  const {yA,hA}=stack(X,w,r.d,u);
+  const gr=c.createLinearGradient(0,yA,0,yA+hA);for(let j=0;j<=4;j++)gr.addColorStop(j/4,'rgba(255,225,130,'+.7*Math.exp(-ALPHA*r.d*j/4)+')');c.fillStyle=gr;c.fillRect(X,yA,w,hA-2);
+  dim(X+w+24,yA,yA+hA,'d = '+r.d.toFixed(2)+' µm');
+  T('I(z) = I₀ · e^(−αz)',X+w/2,568,26,sm(u-1),'600');
+  T('α = '+ALPHA+' µm⁻¹, so 1/α = '+(1/ALPHA).toFixed(1)+' µm',X+w/2,600,22,sm(u-1),'400','#cfd8ff');
+  T('absorbed = 1 − e^(−αd)',X+w/2,632,22,sm(u-1.3),'400','#cfd8ff');
+  plot(720,150,480,300,{y0:0,y1:100,ys:25,yl:'Light absorbed (%)',s:[{g:q=>q.A*100,col:'#4cc9f0',lw:5,fill:1}],marks:[{d:D95,y:95,col:'#57cc99',text:'95 % absorbed at '+D95.toFixed(2)+' µm'}]},p,sm((u-4.6)/.5));
+  [['Thickness',r.d.toFixed(2)+' µm'],['Absorbed',(r.A*100).toFixed(0)+' %'],['Escapes',((1-r.A)*100).toFixed(0)+' %']].forEach(([l,v],i)=>tile(720+i*165,548,150,74,l,v,i==1));
+  caps([[.6,2.8,'Thin absorber: much of the light passes straight through'],[2.8,4.7,'Light fades exponentially with depth'],[4.7,6.2,'Past 0.3 µm nearly every photon is absorbed']],u)}
+
+function collect(u){
+  const p=sm((u-.8)/3.6),r=at(p),X=170,w=280,a=sm(u/.5);
+  T('Thicker loses more carriers',640,60,46,a,'700');pill('Step 2 of 4 · Collection',a);badge(a);
+  const {yA,hA}=stack(X,w,r.d,u);
+  dim(X+w+24,yA,yA+hA,'d = '+r.d.toFixed(2)+' µm');pairs(X,yA,w,hA,r.co,u);
+  /* d against the distance carriers can travel (Lc = Ld + Wd), 0 to 6 µm */
+  const gy=540,px=w/6;c.fillStyle='rgba(255,255,255,.1)';c.fillRect(X,gy,w,14);c.fillStyle='#ffd166';c.fillRect(X,gy,Math.min(w,r.d*px),14);
+  c.strokeStyle='#ff5d8f';c.lineWidth=3;c.beginPath();c.moveTo(X+r.Lc*px,gy-8);c.lineTo(X+r.Lc*px,gy+22);c.stroke();T('Lc',X+r.Lc*px,gy-18,18,1,'600','#ff9bb3');
+  T('0',X,gy+32,16,.8,'400','#cfd8ff','left');T('6 µm',X+w,gy+32,16,.8,'400','#cfd8ff','right');
+  T('d = '+r.d.toFixed(2)+' µm  vs  Lc = '+r.Lc.toFixed(1)+' µm',X+w/2,592,24,sm(u-1),'600');
+  T('collected = (Lc/d) · (1 − e^(−d/Lc))',X+w/2,622,22,sm(u-1.3),'400','#cfd8ff');
+  legend(X-30,650,sm(u-1));
+  plot(720,150,480,300,{y0:0,y1:100,ys:25,yl:'Carriers collected (%)',s:[{g:q=>q.co*100,col:'#ff5d8f',lw:5,fill:1}]},p);
+  [['Thickness',r.d.toFixed(2)+' µm'],['Collected',(r.co*100).toFixed(0)+' %'],['Lost',((1-r.co)*100).toFixed(0)+' %']].forEach(([l,v],i)=>tile(720+i*165,548,150,74,l,v,i==1));
+  caps([[.6,2.8,'Every carrier must reach a contact before it recombines'],[2.8,4.7,'Thicker: longer paths, so more carriers are lost'],[4.7,6.2,'Here Ld = '+TAB[0].Ld.toFixed(1)+' µm, so 3 µm still keeps '+(TAB[N].co*100).toFixed(0)+' %']],u)}
+
+function product(u){
+  const p=sm((u-.8)/3.6),r=at(p),a=sm(u/.5),tw=150,ty=190,th=210;
+  T('Photocurrent = absorbed × collected',640,60,46,a,'700');pill('Step 3 of 4 · Photocurrent',a);badge(a);
+  [['Absorbed',r.A,'#4cc9f0'],['Collected',r.co,'#ff5d8f'],['Jsc',r.jsc/35,'#ffd166']].forEach(([l,f,col],i)=>{
+    const x=60+i*206,hi=i==2;c.fillStyle=hi?'rgba(255,209,102,.22)':'rgba(255,255,255,.08)';c.beginPath();c.roundRect(x,ty,tw,th,14);c.fill();
+    T(l,x+tw/2,ty+26,22,1,'400','#cfd8ff');T(hi?r.jsc.toFixed(1):(f*100).toFixed(0)+' %',x+tw/2,ty+88,hi?52:48,1,'700',hi?'#ffd166':'#fff');
+    if(hi)T('mA/cm²',x+tw/2,ty+126,20,1,'400','#cfd8ff');
+    c.fillStyle='rgba(255,255,255,.12)';c.fillRect(x+16,ty+th-34,tw-32,10);c.fillStyle=col;c.fillRect(x+16,ty+th-34,(tw-32)*cl(f),10);
+    if(i<2)T(i==0?'×':'=',x+tw+28,ty+th/2,46,1,'600','#ffd166')});
+  T('Jsc = 35 mA/cm² × absorbed × collected',340,470,26,sm(u-1),'600');
+  T('35 mA/cm² is the ceiling if every photon were collected',340,506,20,sm(u-1.3),'400','#cfd8ff');
+  plot(720,150,480,300,{y0:0,y1:100,ys:25,yl:'% of maximum',leg:[['absorbed','#4cc9f0'],['collected','#ff5d8f'],['Jsc','#ffd166']],
+    s:[{g:q=>q.A*100,col:'#4cc9f0',lw:3},{g:q=>q.co*100,col:'#ff5d8f',lw:3},{g:q=>q.jsc/35*100,col:'#ffd166',lw:5,fill:1}],
+    marks:[{d:BJ.d,y:BJ.jsc/35*100,col:'#57cc99',dy:80,text:'Jsc peaks at '+BJ.d.toFixed(2)+' µm'}]},p,sm((u-4.6)/.5));
+  caps([[.6,2.8,'Thin: absorption limits the current'],[2.8,4.7,'Thick: collection limits the current'],[4.7,6.2,'The product peaks at '+BJ.d.toFixed(2)+' µm ('+BJ.jsc.toFixed(1)+' mA/cm²)']],u)}
+
+function combine(u){
+  const p=sm((u-.8)/3.4),r=at(p),a=sm(u/.5),w=220,h=210,Y=190;
+  T('Voc and FF add their own penalty',640,60,46,a,'700');pill('Step 4 of 4 · Efficiency',a);badge(a);
+  const cfg=[
+    {t:'Jsc (mA/cm²)',o:{y0:0,y1:40,ys:10,yl:'',s:[{g:q=>q.jsc,col:'#ffd166',lw:4}]},v:r.jsc.toFixed(1)},
+    {t:'Voc (V)',o:{y0:.7,y1:.9,ys:.1,fy:v=>v.toFixed(1),yl:'',s:[{g:q=>q.voc,col:'#4cc9f0',lw:4}]},v:r.voc.toFixed(2)+' V'},
+    {t:'FF (%)',o:{y0:70,y1:90,ys:10,yl:'',s:[{g:q=>q.ff*100,col:'#ff9bb3',lw:4}]},v:(r.ff*100).toFixed(0)+' %'},
+    {t:'PCE (%)',o:{y0:0,y1:30,ys:10,yl:'',s:[{g:q=>q.pce,col:'#57cc99',lw:5,fill:1}],marks:[{d:BP.d,y:BP.pce,col:'#ffd166',up:1,text:'best '+BP.d.toFixed(2)+' µm'}]},v:r.pce.toFixed(1)+' %'}];
+  cfg.forEach((g,i)=>{const X=95+i*300;g.o.mini=1;
+    T(g.t,X+w/2,150,26,sm((u-.2-i*.15)/.4),'600',i==3?'#8ce99a':'#ffd166');
+    plot(X,Y,w,h,g.o,p,sm((u-4.4)/.5));
+    T(g.v,X+w/2,515,i==3?42:36,sm(u-1),'700',i==3?'#8ce99a':'#fff');
+    if(i<3)T(['×','×','='][i],X+260,515,36,sm(u-1),'600','#ffd166')});
+  T('Best thickness ≈ '+BP.d.toFixed(2)+' µm  →  PCE '+BP.pce.toFixed(1)+' %',640,595,40,sm((u-4.6)/.5),'700','#ffd166');
+  caps([[.6,2.6,'Jsc rises quickly, then slowly falls'],[2.6,4.6,'Voc and FF only decline as recombination grows'],[4.6,6.2,'Together they set the optimum thickness']],u)}
+
+const O12=optAt(1e12),O14=optAt(1e14),O17=optAt(1e17);
+function takeaway(u){
+  const X=140,Y=130,w=1000,h=300,a=sm(u/.4),xs=d=>X+xpos(d)*w;
+  T('The sweet spot',640,66,52,a,'700');
+  c.save();c.globalAlpha*=a;[[LO,S0,'255,93,143'],[S0,S1,'87,204,153'],[S1,HI,'76,201,240']].forEach(([l,r,col],i)=>{c.fillStyle='rgba('+col+','+(i==1?.18:.11)+')';c.fillRect(xs(l),Y,xs(r)-xs(l),h)});c.restore();
+  c.save();c.globalAlpha*=a;plot(X,Y,w,h,{y0:0,y1:40,ys:10,yl:'PCE (%)',s:[{g:q=>q.pce,col:'#ffd166',lw:5}],marks:[{d:BP.d,y:BP.pce,col:'#8ce99a',text:'optimum '+BP.d.toFixed(2)+' µm · '+BP.pce.toFixed(1)+' %'}]},1,1);c.restore();
+  [['Too thin','light escapes',(xs(LO)+xs(S0))/2,'#ff9bb3'],['Sweet spot',S0.toFixed(2)+' to '+S1.toFixed(2)+' µm (≥ 95 % of peak)',(xs(S0)+xs(S1))/2,'#8ce99a'],['Too thick','carriers recombine',(xs(S1)+xs(HI))/2,'#8fdcf5']].forEach(([t,s,x,col],i)=>{
+    T(t,x,Y+24,26,sm((u-.3-i*.15)/.3),'700',col);T(s,x,Y+52,17,sm((u-.3-i*.15)/.3),'400','#cfd8ff')});
+  T('More defects shorten Ld, so the optimum moves thinner',640,532,28,sm((u-.9)/.4),'600');
+  [['Nt = 10'+sup(12)+' cm'+sup(-3),O12,0],['Nt = 10'+sup(14)+' cm'+sup(-3)+' (this cell)',O14,1],['Nt = 10'+sup(17)+' cm'+sup(-3),O17,0]].forEach(([l,d,hi],i)=>{
+    const x=640+(i-1)*350-160,q=sm((u-1.3-i*.15)/.4);c.save();c.globalAlpha*=q;c.fillStyle=hi?'rgba(255,209,102,.22)':'rgba(255,255,255,.08)';c.beginPath();c.roundRect(x,570,320,84,14);c.fill();c.restore();
+    T(l,x+160,594,19,q,'400','#cfd8ff');T('optimum '+d.toFixed(2)+' µm',x+160,628,30,q,'700',hi?'#ffd166':'#fff')})}
+
+const SC_=[[0,2.5,title],[2.5,8.5,absorb],[8.5,14.5,collect],[14.5,20.5,product],[20.5,26.5,combine],[26.5,30,takeaway]];
+function draw(t){
+  t=cl(t,0,DUR);c.setTransform(SC,0,0,SC,0,0);c.globalAlpha=1;bg(t);
+  for(const[a,b,f]of SC_)if(t>=a&&t<b){c.save();c.globalAlpha=Math.min(cl((t-a)/.4),cl((b-t)/.4));f(t-a);c.restore()}
+  c.fillStyle='rgba(255,255,255,.7)';c.fillRect(0,H-6,W*t/DUR,6);
+  c.fillStyle='rgba(255,255,255,.55)';SC_.slice(1).forEach(([a])=>c.fillRect(W*a/DUR-1,H-14,2,14)); /* step boundaries */
+  c.fillStyle='#000';c.globalAlpha=Math.max(cl((t-(DUR-.8))/.8),1-cl(t/.4));c.fillRect(0,0,W,H);c.globalAlpha=1}
+
+/* synthesized music: 120 BPM, pad + major-pentatonic arp + kick/hat, chime at each step */
+function music(x,o,dest=x.destination){
+  const m=x.createGain();m.gain.setValueAtTime(.55,o);m.gain.setValueAtTime(.55,o+DUR-2.5);m.gain.linearRampToValueAtTime(0,o+DUR);m.connect(dest);
+  const f=n=>440*Math.pow(2,(n-69)/12);
+  const N_=(n,s,d,ty,v)=>{const a=x.createOscillator(),g=x.createGain();a.type=ty;a.frequency.value=f(n);g.gain.setValueAtTime(.0001,o+s);g.gain.exponentialRampToValueAtTime(v,o+s+.02);g.gain.exponentialRampToValueAtTime(.0001,o+s+d);a.connect(g);g.connect(m);a.start(o+s);a.stop(o+s+d+.05)};
+  const nb=x.createBuffer(1,x.sampleRate/5,x.sampleRate),nd=nb.getChannelData(0);let z=1;for(let i=0;i<nd.length;i++)nd[i]=(z=(z*16807)%2147483647)/1073741823.5-1;
+  const Ht=s=>{const a=x.createBufferSource(),fl=x.createBiquadFilter(),g=x.createGain();a.buffer=nb;fl.type='highpass';fl.frequency.value=8000;g.gain.setValueAtTime(.1,o+s);g.gain.exponentialRampToValueAtTime(.0001,o+s+.04);a.connect(fl);fl.connect(g);g.connect(m);a.start(o+s);a.stop(o+s+.05)};
+  const K=s=>{const a=x.createOscillator(),g=x.createGain();a.frequency.setValueAtTime(140,o+s);a.frequency.exponentialRampToValueAtTime(45,o+s+.15);g.gain.setValueAtTime(.6,o+s);g.gain.exponentialRampToValueAtTime(.0001,o+s+.25);a.connect(g);g.connect(m);a.start(o+s);a.stop(o+s+.3)};
+  const R=[48,43,45,41],PN=[0,2,4,7,9,12,9,7];
+  for(let b=0;b<DUR/2;b++){const s=b*2,r=R[b%4];
+    [0,4,7].forEach(v=>N_(r+12+v,s,2,'triangle',.06));N_(r,s,.9,'triangle',.3);if(b>0)N_(r,s+1,.9,'triangle',.22);
+    for(let k=0;k<8;k++)N_(72+PN[(k+b)%8],s+k*.25,.3,'triangle',.1);
+    if(b>1)for(let k=0;k<4;k++){K(s+k*.5);Ht(s+k*.5+.25)}}
+  SC_.slice(1).forEach(([s])=>{N_(88,s,.9,'sine',.25);N_(95,s+.12,.9,'sine',.18)})}
+function wav(b){const n=b.length,ch=b.numberOfChannels,d=new DataView(new ArrayBuffer(44+n*ch*2)),w=(o,s)=>[...s].forEach((v,i)=>d.setUint8(o+i,v.charCodeAt(0)));
+  w(0,'RIFF');d.setUint32(4,36+n*ch*2,1);w(8,'WAVEfmt ');d.setUint32(16,16,1);d.setUint16(20,1,1);d.setUint16(22,ch,1);d.setUint32(24,b.sampleRate,1);d.setUint32(28,b.sampleRate*ch*2,1);d.setUint16(32,ch*2,1);d.setUint16(34,16,1);w(36,'data');d.setUint32(40,n*ch*2,1);
+  let o=44;for(let i=0;i<n;i++)for(let k=0;k<ch;k++){d.setInt16(o,cl(b.getChannelData(k)[i],-1,1)*32767,1);o+=2}return d.buffer}
+window.DURATION=DUR;window.FPS=FPS;window.renderFrame=t=>draw(t);
+window.renderAudioWav=async()=>{const x=new OfflineAudioContext(2,44100*DUR,44100);music(x,0);const u=new Uint8Array(wav(await x.startRendering()));let s='';for(let i=0;i<u.length;i+=8192)s+=String.fromCharCode.apply(null,u.subarray(i,i+8192));return btoa(s)};
+
+/* ---- playback: start / pause / mute / replay ---- */
+const $=id=>document.getElementById(id),RENDER=location.search.includes('render'),btn=$('b'),ctl=$('ctl');
+let ctx,t0,gain,paused=false,muted=false,raf=0,lastT=12;
+function fit(){if(RENDER)return;SC=cl(c.canvas.getBoundingClientRect().width*(window.devicePixelRatio||1)/W,.5,3);c.canvas.width=Math.round(W*SC);c.canvas.height=Math.round(H*SC)}
+function sync(){$('pp').textContent=paused?'▶':'⏸';$('pp').setAttribute('aria-label',paused?'Play':'Pause');$('mu').textContent=muted?'🔇':'🔊';$('mu').setAttribute('aria-label',muted?'Unmute':'Mute')}
+function frame(){const t=ctx.currentTime-t0;lastT=t;draw(t);if(t>=DUR){btn.textContent='↺ Replay';btn.hidden=false;return}if(!paused)raf=requestAnimationFrame(frame)}
+function start(){
+  cancelAnimationFrame(raf);if(ctx)ctx.close();
+  ctx=new AudioContext();gain=ctx.createGain();gain.gain.value=muted?0:1;gain.connect(ctx.destination);
+  t0=ctx.currentTime+.15;music(ctx,t0,gain);paused=false;btn.hidden=true;ctl.hidden=false;sync();frame()}
+function togglePause(){if(!ctx||lastT>=DUR)return;if(paused){paused=false;ctx.resume();frame()}else{paused=true;ctx.suspend()}sync()}
+function toggleMute(){muted=!muted;if(gain)gain.gain.value=muted?0:1;sync()}
+if(RENDER){btn.remove();ctl.remove();draw(0)}
+else{
+  fit();draw(lastT);addEventListener('resize',()=>{fit();draw(lastT)});
+  btn.onclick=start;$('rp').onclick=start;$('pp').onclick=togglePause;$('mu').onclick=toggleMute;
+  addEventListener('keydown',e=>{
+    if(e.ctrlKey||e.metaKey||e.altKey||!ctx||(e.target.tagName=='BUTTON'&&(e.key==' '||e.key=='Enter')))return;
+    const k=e.key.toLowerCase();if(k==' '||k=='k'){e.preventDefault();togglePause()}else if(k=='m')toggleMute();else if(k=='r')start()})}
+</script>
+</body>
+</html>
